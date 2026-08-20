@@ -1,4 +1,18 @@
 #!/usr/bin/env nbb
+;; VENDORED from com-junkawasaki/root (scripts/lei-verify-facts.cljs), root
+;; pinned at 6846befd962542757e2decdc95895dcb78956f1b. Do not edit here.
+;;
+;; This copy is deliberate, not an oversight. What makes this repository an
+;; archive is that a single `git clone` of it can be checked against the live
+;; registry with no workspace, no west, and no dependency resolution. Depending
+;; on a shared file would take that away, so the file is copied instead.
+;;
+;; The obligation that creates -- that the copy still matches what it names --
+;; is checked by `scripts/verify-vendored-copies.cljs` in the superproject,
+;; which diffs from the `(ns` form down, so this header is not counted as
+;; drift. Fix anything wrong here in the canonical and re-vendor; an edit made
+;; only here is a fork, and it will be reported as one.
+;;
 ;; Re-fetch every public registry source facts.edn cites, and fail if the live
 ;; record no longer says what this repository recorded.
 ;;
@@ -121,7 +135,16 @@
         ra*  (get-in ra  [:json "data" "attributes"])
         elf* (get-in elf [:json "data" "attributes"])
         isin-page (pagination isins)
-        kid-page  (pagination (first kid-pages))]
+        kid-page  (pagination (first kid-pages))
+        ;; Mirror the instrument identifiers only when they all fit in the single
+        ;; page this script actually fetched. Above that, record the count alone:
+        ;; at a large issuer's volume the list turns over as instruments mature
+        ;; and are issued, which would keep this check red for reasons that are
+        ;; not "the citation broke". Which branch was taken is stated in the
+        ;; :source/note below, so a bare count is never ambiguous between "too
+        ;; many to mirror" and "nobody looked".
+        isins-mirrored? (and (present? isins)
+                             (<= (or (get isin-page "lastPage") 1) 1))]
     (into
      (filterv
       some?
@@ -164,13 +187,19 @@
               :securities/isin-count (get isin-page "total")
               :securities/page-size (get isin-page "perPage")
               :securities/page-count (get isin-page "lastPage")
-              :source/note (str "Count of instrument identifiers GLEIF maps to this LEI, read "
-                                "from meta.pagination.total of the cited page. The individual "
-                                "ISINs are deliberately not mirrored into this repository: at "
-                                "this issuer's volume they turn over as instruments mature and "
-                                "are issued, which would make this check red for reasons that "
-                                "are not 'the citation broke'. Walk the cited URL's page range "
-                                "to enumerate them. This is a count, not a share count.")})
+              :source/note (if isins-mirrored?
+                             (str "Count of instrument identifiers GLEIF maps to this LEI, read "
+                                  "from meta.pagination.total of the cited page. The whole list "
+                                  "fits in that single page, so each identifier is also recorded "
+                                  "below as its own :fact/kind :security entity. This is a "
+                                  "count, not a share count.")
+                             (str "Count of instrument identifiers GLEIF maps to this LEI, read "
+                                  "from meta.pagination.total of the cited page. The individual "
+                                  "ISINs are deliberately not mirrored into this repository: at "
+                                  "this issuer's volume they turn over as instruments mature and "
+                                  "are issued, which would make this check red for reasons that "
+                                  "are not 'the citation broke'. Walk the cited URL's page range "
+                                  "to enumerate them. This is a count, not a share count."))})
 
        (prov lou retrieved-at
              {:fact/id "gleif-managing-lou"
@@ -204,7 +233,11 @@
               :authority/country (get-in ra* ["jurisdictions" 0 "country"])
               :authority/jurisdiction (get-in ra* ["jurisdictions" 0 "jurisdiction"])
               :company/registered-as (get ent "registeredAs")
-              :source/note "Resolves :company/registration-authority-id to the national register that corroborated the record."})
+              :source/note (if (= "RA999999" (get ra* "code"))
+                             (str "RA999999 is GLEIF's placeholder for \"no registration authority "
+                                  "available\": this record is not corroborated against a national "
+                                  "business register, which is why :company/registered-as is nil.")
+                             "Resolves :company/registration-authority-id to the national register that corroborated the record.")})
 
        (prov elf retrieved-at
              {:fact/id "iso-20275-entity-legal-form"
@@ -235,10 +268,25 @@
                                 "measured zero, not an unasked question. Each child, if any, "
                                 "is recorded as its own :fact/kind :direct-child entity below.")})])
 
-     ;; Each child cites the page it was actually read from, not the unpaginated
-     ;; collection URL. A :source/url this script never fetches would be a
-     ;; citation nothing verifies.
-     (mapcat (fn [page]
+     (concat
+      ;; One entity per instrument identifier, each citing the page it was read
+      ;; from. Emitted only on the branch chosen above; when the list is too long
+      ;; to mirror, the count entity says so rather than standing alone.
+      (when isins-mirrored?
+        (map (fn [i]
+               (let [a (get i "attributes")]
+                 (prov isins retrieved-at
+                       {:fact/id (str "gleif-isin-" (str/lower-case (get a "isin")))
+                        :fact/kind :security
+                        :company/lei (get a "lei")
+                        :securities/isin (get a "isin")
+                        :source/note "An instrument identifier GLEIF maps to this LEI."})))
+             (get-in isins [:json "data"])))
+
+      ;; Each child cites the page it was actually read from, not the unpaginated
+      ;; collection URL. A :source/url this script never fetches would be a
+      ;; citation nothing verifies.
+      (mapcat (fn [page]
                (map (fn [k]
                       (let [a (get k "attributes")
                             e (get a "entity")]
@@ -252,7 +300,7 @@
                                :relationship/kind "IS_DIRECTLY_CONSOLIDATED_BY"
                                :relationship/parent-lei lei})))
                     (get-in page [:json "data"])))
-             kid-pages))))
+              kid-pages)))))
 
 ;; ---------------------------------------------------------------- emit
 
@@ -265,7 +313,7 @@
    :registration/initial-date :registration/last-update-date :registration/status
    :registration/next-renewal-date :registration/managing-lou-lei
    :registration/corroboration-level :registration/conformity-flag
-   :securities/isin-count :securities/page-size :securities/page-count
+   :securities/isin :securities/isin-count :securities/page-size :securities/page-count
    :issuer/name :issuer/marketing-name :issuer/website :issuer/accreditation-date
    :authority/code :authority/international-name :authority/organization-name
    :authority/local-organization-name :authority/website :authority/country
@@ -294,11 +342,11 @@
        ";; (d/transact conn (edn/read-string (slurp \"facts.edn\"))) like every other EDN\n"
        ";; corpus in this workspace. :company/lei is the join key.\n"
        ";;\n"
-       ";; Two counts here are counts and not lists, on purpose --\n"
-       ";; :securities/isin-count and :relationship/direct-child-count. Both are read\n"
-       ";; from meta.pagination.total of a page this script actually fetched, and both\n"
-       ";; :source/note fields say what was and was not mirrored. A zero in this file is\n"
-       ";; a measured zero.\n"
+       ";; The two counts here -- :securities/isin-count and\n"
+       ";; :relationship/direct-child-count -- are read from meta.pagination.total of a\n"
+       ";; page this script actually fetched. Each one's :source/note says whether the\n"
+       ";; list underneath it was also mirrored into this file or only counted, so a\n"
+       ";; bare count is never ambiguous. A zero here is a measured zero.\n"
        ";;\n"
        ";; NOT on the shared query plane yet. manifest/edn-query.cljs (com-junkawasaki/root)\n"
        ";; has loaders for blueprint.edn and 80-data/public/tos.journal.edn and none for\n"
