@@ -21,7 +21,7 @@ Archives the publicly published Terms of Service / legal document for **Discover
 | `facts.edn` | 9 verified registry facts with per-fact provenance. **Generated** — see below. |
 | `80-data/public/tos.journal.edn` | The archived legal document, as an `[e a v tx op]` journal. |
 | `80-data/public/site.journal.edn` | Official-website enrichment (title, description, reachability). |
-| `scripts/verify-facts.cljs` | Re-fetches every source `facts.edn` cites and fails if the live record disagrees. |
+| `scripts/verify-facts.cljk` | Re-fetches every source `facts.edn` cites and fails if the live record disagrees. |
 
 ## Verifying the record
 
@@ -30,8 +30,8 @@ them. `facts.edn` now carries them as data, and every value in it was read out o
 a public registry response whose URL and retrieval time sit next to the value:
 
 ```
-nbb scripts/verify-facts.cljs           # check the recorded facts against the live sources
-nbb scripts/verify-facts.cljs --write   # re-fetch and rewrite facts.edn
+nbb scripts/verify-facts.cljk           # check the recorded facts against the live sources
+nbb scripts/verify-facts.cljk --write   # re-fetch and rewrite facts.edn
 ```
 
 Nine GLEIF endpoints back the file — the LEI record, its ISINs, its managing LOU,
